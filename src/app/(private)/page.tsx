@@ -53,8 +53,9 @@ export default async function HomePage() {
     </section>
     <div className="grid min-w-0 gap-6 @min-[820px]:grid-cols-2">
       <Purchases id="empty-items" title="Habis" description="Persediaan yang perlu diisi kembali." result={dashboard.empty} href="/essentials?filter=out_of_stock" emptyMessage="Tidak ada barang yang habis. Persediaan aman." />
+      <Purchases id="available-items" title="Barang tersedia" description="Persediaan yang masih tersedia di rumah." result={dashboard.available} href="/essentials?filter=in_stock" emptyMessage="Belum ada barang dengan status tersedia." />
       <Purchases id="overdue-purchases" title="Belanja terlambat" description="Rencana sebelum hari ini yang masih perlu dibeli." result={dashboard.overdue} href="/essentials?filter=to_buy" emptyMessage="Tidak ada rencana belanja yang terlambat." overdue />
-      <div className="@min-[820px]:col-span-2"><Purchases id="upcoming-purchases" title="Belanja mendatang" description="Rencana hari ini dan sesudahnya, diurutkan dari tanggal terdekat." result={dashboard.upcoming} href="/essentials?filter=to_buy" emptyMessage="Belum ada rencana belanja mendatang. Atur tanggal di Kebutuhan rumah." /></div>
+      <Purchases id="upcoming-purchases" title="Belanja mendatang" description="Rencana hari ini dan sesudahnya, diurutkan dari tanggal terdekat." result={dashboard.upcoming} href="/essentials?filter=to_buy" emptyMessage="Belum ada rencana belanja mendatang. Atur tanggal di Kebutuhan rumah." />
     </div>
   </div>;
 }

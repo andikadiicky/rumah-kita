@@ -5,7 +5,7 @@ export type Essential = {
   status: EssentialStatus;
   planned_purchase_date: string | null;
 };
-export type EssentialFilter = "all" | "to_buy" | "out_of_stock";
+export type EssentialFilter = "all" | "to_buy" | "out_of_stock" | "in_stock";
 export const statusLabels: Record<EssentialStatus, string> = {
   in_stock: "Tersedia", to_buy: "Perlu Dibeli", out_of_stock: "Habis",
 };
@@ -13,7 +13,7 @@ export function needsBuying(item: Pick<Essential, "status">) {
   return item.status === "to_buy" || item.status === "out_of_stock";
 }
 export function matchesFilter(item: Essential, filter: EssentialFilter) {
-  return filter === "all" || (filter === "to_buy" ? needsBuying(item) : item.status === "out_of_stock");
+  return filter === "all" || (filter === "to_buy" ? needsBuying(item) : item.status === filter);
 }
 export function isOverdue(item: Essential, today: string) {
   return needsBuying(item) && !!item.planned_purchase_date && item.planned_purchase_date < today;

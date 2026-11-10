@@ -126,7 +126,7 @@ export function EssentialsClient({ items, today: initialToday, initialFilter = "
   }, []);
 
   const filtered = items.filter((item) => matchesFilter(item, filter));
-  const filters = [["all", "Semua"], ["to_buy", "Perlu Dibeli"], ["out_of_stock", "Habis"]] as const;
+  const filters = [["all", "Semua"], ["to_buy", "Perlu Dibeli"], ["out_of_stock", "Habis"], ["in_stock", "Tersedia"]] as const;
   return <section className="space-y-8" aria-busy={busy}>
     <div><p className="mb-3 text-sm font-medium uppercase tracking-widest text-amber-800">Rumah Kita</p><h1 className="text-3xl font-semibold sm:text-4xl">Kebutuhan rumah</h1><p className="mt-3 text-stone-600">Catat persediaan dan rencanakan belanja berikutnya.</p></div>
     <section aria-labelledby="add-heading" className="rounded-2xl border border-stone-200 bg-white p-5 sm:p-6">
