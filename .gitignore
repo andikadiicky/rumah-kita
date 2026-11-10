@@ -1,0 +1,25 @@
+node_modules/
+.next/
+out/
+.vercel/
+*.tsbuildinfo
+next-env.d.ts
+.env*
+!.env.example
+
+# Local credentials and database/tooling state
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+service-account*.json
+*-service-account.json
+supabase/.temp/
+supabase/.branches/
+
+# Logs and local test artifacts
+*.log
+coverage/
+playwright-report/
+test-results/
