@@ -259,7 +259,7 @@ git ls-files -- .env.local
 
 Perintah terakhir harus tidak mengeluarkan nama file. `.env.example` hanya
 berisi dua nama variabel dengan nilai kosong. Pastikan file berikut masuk commit:
-`package.json`, `package-lock.json`, seluruh `src/`, kedua migrasi SQL,
+`package.json`, `package-lock.json`, seluruh `src/`, seluruh migrasi SQL (termasuk `003_cash_flow.sql`),
 `.env.example`, `.gitignore`, konfigurasi Next.js/TypeScript/ESLint/PostCSS,
 dan README. `.env.local`, file `.env` lain, `.vercel/`, private key, serta file
 credential JSON lokal diabaikan. Jangan memakai `git add -f` untuk file rahasia.
@@ -299,7 +299,7 @@ jangan mengimpor `main` lama yang hanya berisi scaffold.
 
 ### 2. Siapkan database Production
 
-Di proyek Supabase **Production**, jalankan kedua migrasi melalui **SQL Editor**
+Di proyek Supabase **Production**, jalankan migrasi `001`, `002`, dan `003` melalui **SQL Editor**
 sesuai urutan pada bagian Menyiapkan Supabase Free di atas, hanya jika belum
 pernah berhasil diterapkan. Vercel tidak menjalankan migrasi SQL ini otomatis.
 Aktifkan provider Email, nonaktifkan signup publik dan anonymous sign-ins,
@@ -378,7 +378,7 @@ perlu dikonfigurasi jika menambah OAuth, magic link, atau pemulihan password.
 Preview yang membutuhkan login dan data harus diarahkan ke proyek Supabase
 **development/preview** terpisah, bukan database Production:
 
-1. Buat proyek Supabase kedua. Terapkan kedua migrasi di proyek tersebut dan
+1. Buat proyek Supabase kedua. Terapkan seluruh migrasi (`001`–`003`) di proyek tersebut dan
    buat akun pengujian sendiri; akun dan UUID pengguna tidak otomatis disalin
    dari Production. Nonaktifkan signup publik juga.
 2. Di **Vercel Project → Settings → Environment Variables**, tambahkan nama
@@ -457,3 +457,139 @@ Build lokal dan pemeriksaan backend lokal dijalankan pada tahap persiapan.
 GitHub push, import Vercel, deployment, penerapan SQL Production, pengaturan Site
 URL live, dan smoke test dua perangkat tetap merupakan langkah dashboard/manual
 di atas, bukan hasil yang sudah diverifikasi live.
+
+## Cash flow dan Debt Tracker
+
+Menu **Keuangan / Cash flow** tersedia di `/cash-flow?month=YYYY-MM`. Fitur ini
+memakai dua tabel baru pada proyek Supabase yang sama, bukan proyek/database
+berbayar tambahan. Koneksi tetap menggunakan dua environment variable Supabase
+publik yang sudah ada dan sesi pemilik akun.
+
+### Aktifkan database keuangan
+
+1. Commit/deploy kode fitur ini setelah ditinjau.
+2. Pada proyek Supabase yang sesuai (development, Preview, atau Production), buka
+   **SQL Editor → New query**.
+3. Jika migrasi `001_initial.sql` dan `002_household_backend.sql` sudah pernah
+   berhasil dijalankan, **jangan jalankan ulang**. Jalankan seluruh isi
+   `supabase/migrations/003_cash_flow.sql` saja, satu kali.
+4. Untuk proyek kosong, jalankan `001`, `002`, lalu `003` berurutan. Migrasi ketiga
+   memakai transaksi; jika gagal, selesaikan penyebabnya sebelum menjalankan ulang.
+5. Restart aplikasi lokal / redeploy Vercel setelah kode diperbarui. Tidak ada
+   service-role key, variabel database baru, atau signup tambahan yang diperlukan.
+
+Migrasi membuat `finance_transactions`, `finance_debts`, validasi pembayaran,
+serta RPC `finance_report(date)`. RLS membatasi `owner_id = auth.uid()` untuk
+seluruh tabel dan laporan. Role anonim tidak memiliki akses. Endpoint baru
+`POST /api/finance` memverifikasi pengguna, origin, dan Zod; owner tidak diterima
+dari klien. Pesan error SQL tidak diteruskan ke browser.
+
+### Cara pencatatan dan arti angka
+
+- Sumber dana tetap **Dika** dan **Affi**, di bawah satu akun rumah tangga. Ini
+  bukan dua akun Supabase yang berbeda.
+- Nominal adalah integer Rupiah positif, tanpa sen/desimal. Masukkan angka tanpa
+  pemisah, misalnya `100000`. Batas satu catatan Rp999.999.999.999. Agregat uang
+  dikirim sebagai string lalu diformat dengan BigInt agar total tetap presisi.
+- Jenis transaksi: pemasukan, pengeluaran, transfer Dika–Affi, dan saldo awal.
+  Catat saldo awal sekali saat mulai menggunakan aplikasi, bukan tiap bulan.
+- Status **paid** berarti uang sudah dibayar/diterima; **pending** adalah rencana
+  yang belum berpindah; **cancelled** tidak masuk perhitungan aktual/rencana.
+- Saldo aktual menghitung semua transaksi paid sampai akhir bulan terpilih,
+  termasuk saldo yang dibawa dari bulan sebelumnya. Saldo rencana menyesuaikan
+  pengeluaran dan transfer pending pada bulan terpilih. Income pending tidak
+  diasumsikan sudah tersedia. Transfer internal tidak menambah income/spending
+  dan total transfer bersih dua orang adalah nol, termasuk dalam proyeksi.
+- Income/spending bulanan hanya menghitung pemasukan/pengeluaran paid dalam bulan
+  kalender transaksi. Pending ditampilkan terpisah. Transfer dan saldo awal tidak
+  masuk income/spending. Savings yang dikirim ke tempat simpan di luar dua sumber
+  ini dicatat sebagai pengeluaran/alokasi; bukan otomatis dianggap konsumsi.
+- Untuk patungan, buat satu baris per sumber dana. Jika baru dibayar sebagian,
+  pisahkan nominal paid dan nominal pending agar komitmen tidak terhitung dua kali.
+- Kategori mencakup kewajiban, piutang, subscription, rumah, WiFi, listrik, uang
+  sangu, groceries, savings, transportasi, kesehatan, pendidikan, hiburan, makan
+  di luar, donasi, gaji, bonus, usaha, hadiah, pinjaman, dan lainnya.
+- Filter sumber/status berlaku pada halaman ledger yang sedang ditampilkan
+  (50 transaksi per halaman); ringkasan dan pivot tetap menghitung seluruh data
+  bulan melalui PostgreSQL, tidak dibatasi halaman PostgREST 1.000 baris.
+- Grafik menampilkan 12 bulan sampai bulan terpilih. Pilih bulan lama di URL,
+  pemilih bulan, atau grafik untuk melihat sejarah lain. Bulan yang belum selesai
+  tidak sebanding dengan bulan penuh. Simulasi pengurangan spending bukan prediksi
+  otomatis dan tidak mengubah catatan atau anggaran.
+
+### Debt Tracker dan cicilan
+
+Utang (**payable**) berarti kita harus membayar; piutang (**receivable**) berarti
+uang kita dipinjam pihak lain. Isi pihak lain, pemilik dana, pokok total, tanggal
+mulai, jumlah cicilan (1–360), tanggal cicilan pertama, dan jatuh tempo opsional.
+Membuat catatan tidak otomatis mengubah saldo karena tidak semua utang baru
+merupakan uang masuk saat ini.
+
+Jadwal membagi pokok ke Rupiah utuh tanpa kehilangan sisa pembulatan. Tanggal
+bulanan dipertahankan bila ada; tanggal 31 dijepit ke akhir Februari lalu kembali
+ke tanggal 31 pada Maret. Jadwal ini tidak menghitung bunga otomatis: masukkan
+jumlah kewajiban total yang ingin dilacak sebagai pokok. Bila perlu nilai bunga
+terpisah, catat sebagai pengeluaran tersendiri.
+
+**Bayar cicilan** atau **Catat pembayaran** membuat transaksi terkait utang:
+payable menjadi pengeluaran dari pemilik dana, receivable menjadi pemasukan ke
+pemilik dana. Tidak ada tabel pembayaran kedua yang menjumlahkan uang yang sama
+lagi. Hanya pembayaran paid mengurangi pokok; pembayaran dialokasikan ke jadwal
+tertua terlebih dahulu. Pembayaran sebagian, status Terlambat, Lunas, progress,
+dan sisa diperlihatkan berdasarkan posisi akhir bulan yang dipilih. Jadwal
+cicilan belum menjadi spending pending sampai dicatat sebagai transaksi; gunakan
+status pending saat baru merencanakan pembayaran.
+
+Database menolak pembayaran di atas pokok, sumber dana/jenis yang tidak cocok,
+tanggal pembayaran sebelum awal utang, referensi utang milik akun lain, serta
+pengurangan pokok di bawah jumlah yang sudah dibayar. Pembayaran diserialisasi
+per utang melalui row lock. Menghapus catatan utang mempertahankan transaksi
+pembayarannya (tautan utang dilepas), sehingga saldo historis tidak hilang.
+
+### Analisis struktur Google Sheet
+
+Halaman Google Sheet **Monthly Spending Tracker** dapat dibaca melalui tampilan
+HTML setelah akses jaringan diizinkan. Tab yang ditemukan adalah **Spending Plan
+December**, **Spending Plan November**, **Savings**, dan **Debt Tracker**. Analisis
+ini berdasarkan sel yang dirender, bukan audit seluruh formula spreadsheet.
+
+Money In memakai tanggal, sumber, nominal, dan catatan; Money Out memisahkan
+pemilik dana, kategori/deskripsi, nominal, status, dan catatan. Ringkasan sheet
+masih memasukkan beberapa baris Pending ke total pengeluaran/sisa. Karena itu
+aplikasi membedakan saldo aktual dan rencana, serta memisahkan savings/alokasi
+ketika menilai konsumsi. Sebutan Piutang pada beberapa baris sheet mencakup
+cicilan/kartu kredit; di debt tracker aplikasi, arah utang/piutang dibuat eksplisit.
+
+Debt Tracker menggunakan jadwal bulanan per barang dengan nominal dan status;
+ini diwujudkan menjadi jadwal cicilan, progress, dan pembayaran terkait ledger.
+Beberapa tanggal pada tab berlabel November/December masih berada di Oktober.
+Aplikasi memakai bulan kalender **tanggal transaksi**, bukan nama tab. Penyesuaian
+periode gajian atau impor data lama memerlukan pemetaan terlebih dahulu.
+
+**Tidak ada data pribadi dari sheet yang diimpor otomatis ke Supabase, dijadikan
+seed, atau disimpan sebagai angka pribadi di source code.** Tab Savings tidak
+dijadikan asumsi adanya rekening tambahan; versi ini melacak sumber Dika/Affi.
+
+### Pengujian fitur keuangan
+
+```sh
+npx eslint .
+npx tsc --noEmit
+npm test
+npm run test:browser
+npm run build
+```
+
+Tes PostgreSQL disposable memeriksa report income/spending, saldo lintas bulan,
+paid/pending/cancelled, transfer, Rupiah utuh, data lebih dari 1.000 baris,
+piutang, cicilan parsial, batas pembayaran, dan RLS. Browser memakai Auth/PostgREST
+fixture lokal dan SQL migrasi yang sama: input, reload, edit gagal yang menjaga
+isian, pindah bulan, hapus, pembayaran cicilan, tampilan 390/768/1280 px, label,
+fokus, target sentuh, dan API tamu 401. Tidak memakai data keuangan live.
+
+Sesudah menerapkan `003` ke proyek development, ulangi dengan record disposable:
+catat saldo awal masing-masing sumber, income, spending paid dan pending,
+transfer internal, utang/piutang, serta cicilan parsial. Verifikasi dari perangkat
+kedua dengan akun yang sama. Akun Supabase kedua harus tidak bisa melihat/mengubah
+catatan pertama atau mengakses laporan pertamanya. Migrasi dan smoke test live
+memerlukan akses proyek Supabase; belum dijalankan otomatis dalam implementasi.

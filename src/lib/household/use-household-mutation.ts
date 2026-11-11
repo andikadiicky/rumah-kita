@@ -2,22 +2,23 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import type { HouseholdCommand } from "./commands";
 import type { Save } from "@/components/household-form";
 
-export function useHouseholdMutation(options: { missing: string; invalid: string; saved: string; deleted: string }) {
+export function useHouseholdMutation<Command extends { action: string } = HouseholdCommand>(options: { endpoint?: string; missing: string; invalid: string; saved: string; deleted: string }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [refreshing, startTransition] = useTransition();
   const [announcement, setAnnouncement] = useState("");
   const lock = useRef(false);
   const refresh = () => startTransition(() => router.refresh());
-  const save: Save = async (command) => {
+  const save: Save<Command> = async (command) => {
     if (lock.current || refreshing) return { ok: false, message: "Tunggu perubahan sebelumnya selesai, lalu coba lagi." };
     lock.current = true;
     setSaving(true);
     setAnnouncement("");
     try {
-      const response = await fetch("/api/household", {
+      const response = await fetch(options.endpoint ?? "/api/household", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(command), signal: AbortSignal.timeout(20_000),
       });

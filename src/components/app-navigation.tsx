@@ -8,6 +8,7 @@ const links = [
   { href: "/essentials", label: "Kebutuhan rumah", short: "Kebutuhan", path: "M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1" },
   { href: "/meal-plan", label: "Rencana makan", short: "Menu", path: "M8 2v4m8-4v4M3 10h18M4 4h16a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" },
   { href: "/recipes", label: "Resep", short: "Resep", path: "M12 5v16M3 3h5a4 4 0 0 1 4 2 4 4 0 0 1 4-2h5v16h-5a4 4 0 0 0-4 2 4 4 0 0 0-4-2H3Z" },
+  { href: "/cash-flow", label: "Cash flow", short: "Keuangan", path: "M3 6h18v14H3ZM3 6V3h15v3M16 12h5v4h-5Z" },
 ] as const;
 
 export function AppNavigation() {
@@ -28,6 +29,6 @@ export function AppNavigation() {
       <nav aria-label="Navigasi utama" className="space-y-2">{items(false)}</nav>
       <p className="mt-8 px-3 text-xs leading-6 text-stone-500">Satu rumah, satu ruang pribadi.</p>
     </aside>
-    <nav aria-label="Navigasi utama" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-stone-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">{items(true)}</nav>
+    <nav aria-label="Navigasi utama" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-stone-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">{items(true)}</nav>
   </>;
 }
