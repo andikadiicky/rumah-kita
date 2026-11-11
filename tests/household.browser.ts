@@ -10,6 +10,7 @@ import { once } from "node:events";
 import { chromium, expect } from "@playwright/test";
 import { PGlite } from "@electric-sql/pglite";
 import { addCalendarDays, mondayForDate } from "../src/lib/meal-plan/model";
+import { rupiah } from "../src/lib/finance/model";
 import { todayInJakarta } from "../src/lib/date";
 
 const owner = "11111111-1111-4111-8111-111111111111";
@@ -40,6 +41,49 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
       if (request.headers.authorization !== `Bearer ${token}`) return send(401, { message: "Unauthorized fixture" });
       const url = new URL(request.url!, "http://fixture.test");
       if (url.pathname === "/auth/v1/user") return send(200, user);
+      if (url.pathname === "/rest/v1/rpc/finance_report") {
+        let raw = ""; for await (const chunk of request) raw += chunk;
+        const body = JSON.parse(raw);
+        const result = await db.query<{report: unknown}>("select public.finance_report($1) as report", [body.p_month]);
+        return send(200, result.rows[0].report);
+      }
+      if (["/rest/v1/finance_transactions", "/rest/v1/finance_debts"].includes(url.pathname)) {
+        const table = url.pathname.endsWith("finance_transactions") ? "finance_transactions" : "finance_debts";
+        if (request.method === "GET") {
+          assert.equal(url.searchParams.get("owner_id"), `eq.${owner}`);
+          const bounds = url.searchParams.getAll("transaction_date");
+          const lower = bounds.find((b) => b.startsWith("gte."))?.slice(4);
+          const upper = bounds.find((b) => b.startsWith("lt."))?.slice(3);
+          assert.ok(lower && upper);
+          const records = await db.query(`select id,transaction_date::text,title,kind,person,destination,category,amount,status,debt_id,notes,created_at from public.finance_transactions where transaction_date >= $1 and transaction_date < $2 order by transaction_date desc,created_at desc,id`, [lower, upper]);
+          const offset = Number(url.searchParams.get("offset") ?? 0);
+          const limit = Number(url.searchParams.get("limit") ?? 50);
+          response.setHeader("Content-Range", `${offset}-${Math.max(offset,offset+Math.min(records.rows.length,limit)-1)}/${records.rows.length}`);
+          return send(200, records.rows.slice(offset,offset+limit));
+        }
+        if (rejectWrite) { rejectWrite=false;return send(503, { message: "Fixture failure" }); }
+        let raw = ""; for await (const chunk of request) raw += chunk;
+        const body = raw ? JSON.parse(raw) : {};
+        const id = url.searchParams.get("id")?.slice(3);
+        let result;
+        if (request.method === "DELETE") {
+          assert.equal(url.searchParams.get("owner_id"), `eq.${owner}`);
+          result = await db.query(`delete from public.${table} where owner_id=$1 and id=$2 returning id`, [owner,id]);
+        } else {
+          const fields = Object.keys(body);
+          const allowed = new Set(["owner_id","transaction_date","title","kind","person","destination","category","amount","status","debt_id","notes","direction","counterparty","principal","start_date","due_date","installment_count","first_payment_date"]);
+          assert.ok(fields.every((field) => allowed.has(field)));
+          const values = fields.map((field) => body[field]);
+          if (request.method === "POST") {
+            assert.equal(body.owner_id,owner);
+            result = await db.query(`insert into public.${table}(${fields.join(",")}) values (${fields.map((_,i)=>`$${i+1}`).join(",")}) returning *`,values);
+          } else {
+            assert.equal(url.searchParams.get("owner_id"), `eq.${owner}`);
+            result = await db.query(`update public.${table} set ${fields.map((field,i)=>`${field}=$${i+1}`).join(",")} where owner_id=$${values.length+1} and id=$${values.length+2} returning *`,[...values,owner,id]);
+          }
+        }
+        return send(200,request.headers.accept?.includes("vnd.pgrst.object") ? result.rows[0] : result.rows);
+      }
       if (!["/rest/v1/essentials", "/rest/v1/recipes", "/rest/v1/meal_slots"].includes(url.pathname)) return send(404, {});
       const recipeRequest = url.pathname === "/rest/v1/recipes";
       const mealRequest = url.pathname === "/rest/v1/meal_slots";
@@ -143,7 +187,7 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
       grant usage on schema auth,public to authenticated;
       grant execute on function auth.uid() to authenticated;
       insert into auth.users values ('${owner}'),('${other}');`);
-    for (const file of ["001_initial.sql", "002_household_backend.sql"]) {
+    for (const file of ["001_initial.sql", "002_household_backend.sql", "003_cash_flow.sql"]) {
       await db.exec(await readFile(join(process.cwd(), "supabase/migrations", file), "utf8"));
     }
     await db.exec(`insert into public.essentials(owner_id,name,status) values
@@ -189,7 +233,7 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? (existsSync("/usr/bin/chromium") ? "/usr/bin/chromium" : chromium.executablePath()), args: ["--no-sandbox"] });
     const guest = await browser.newContext();
     const guestPage = await guest.newPage();
-    for (const path of ["/", "/essentials", "/recipes", "/meal-plan"]) {
+    for (const path of ["/", "/essentials", "/recipes", "/meal-plan", "/cash-flow"]) {
       await guestPage.goto(base + path);
       await expect(guestPage).toHaveURL(base + "/login");
       await expect(guestPage.getByLabel("Email", { exact: true })).toBeVisible();
@@ -210,6 +254,10 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     });
     assert.equal(forwardedLogout.status(), 303);
     assert.equal(forwardedLogout.headers().location, "https://rumah-kita.example/login");
+    const financeGuest = await guest.request.post(base + "/api/finance", {
+      headers: { Origin: base }, data: { entity: "transaction", action: "delete", data: { id: "11111111-1111-4111-8111-111111111111" } },
+    });
+    assert.equal(financeGuest.status(), 401);
     await guest.close();
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await context.addCookies([{
@@ -217,7 +265,11 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
       url: base, sameSite: "Lax",
     }]);
     const page = await context.newPage();
-    page.on("pageerror", (error) => console.error("Browser runtime error:", error.message));
+    const runtimeErrors: string[] = [];
+    page.on("pageerror", (error) => runtimeErrors.push(error.message));
+    page.on("console", (message) => {
+      if (message.type() === "error" && /hydration|hydrated|did not match/i.test(message.text())) runtimeErrors.push(message.text());
+    });
     page.setDefaultTimeout(20_000);
     await page.goto(base + "/essentials");
     await expect(page.getByText("Belum ada kebutuhan rumah", { exact: true })).toBeVisible();
@@ -236,10 +288,10 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     await expect(card).toBeVisible();
     await expect(card.getByText("Terlambat", { exact: true })).toBeVisible();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    await page.screenshot({ path: "/tmp/rumah-kita-essentials-mobile.png", fullPage: true });
+    await page.screenshot({ caret: "initial",  path: "/tmp/rumah-kita-essentials-mobile.png", fullPage: true });
     await page.setViewportSize({ width: 768, height: 1024 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    await page.screenshot({ path: "/tmp/rumah-kita-essentials-tablet.png", fullPage: true });
+    await page.screenshot({ caret: "initial",  path: "/tmp/rumah-kita-essentials-tablet.png", fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
     card = page.getByRole("listitem", { name: "Beras uji", exact: true });
@@ -302,7 +354,7 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     await editor.getByLabel("Bahan-bahan", { exact: true }).fill(ingredients);
     await editor.getByLabel("Langkah memasak", { exact: true }).fill(steps);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    await page.screenshot({ path: "/tmp/rumah-kita-recipes-editor-mobile.png", fullPage: true });
+    await page.screenshot({ caret: "initial",  path: "/tmp/rumah-kita-recipes-editor-mobile.png", fullPage: true });
     await editor.getByRole("button", { name: "Simpan resep", exact: true }).click();
     let recipe = page.getByRole("article", { name: "Nasi goreng uji", exact: true });
     await expect(recipe).toBeVisible();
@@ -314,7 +366,7 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     assert.equal(await ingredientDetail.textContent(), ingredients);
     assert.equal(await ingredientDetail.evaluate((el) => getComputedStyle(el).whiteSpace), "pre-wrap");
     assert.equal(await recipe.getByRole("region", { name: "Langkah memasak", exact: true }).locator("p").textContent(), steps);
-    await page.screenshot({ path: "/tmp/rumah-kita-recipes-detail-mobile.png", fullPage: true });
+    await page.screenshot({ caret: "initial",  path: "/tmp/rumah-kita-recipes-detail-mobile.png", fullPage: true });
     const storedRecipe = await db.query<{id: string}>("select id from public.recipes where name='Nasi goreng uji'");
     await db.query(`insert into public.meal_slots(owner_id,meal_date,meal_type,recipe_id,meal_name)
       values ($1,'2026-11-09','dinner',$2,'')`, [owner, storedRecipe.rows[0].id]);
@@ -331,7 +383,7 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     await expect(recipe.getByLabel("Bahan-bahan", { exact: true })).toHaveValue(ingredients);
     await page.setViewportSize({ width: 768, height: 1024 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    await page.screenshot({ path: "/tmp/rumah-kita-recipes-editor-tablet.png", fullPage: true });
+    await page.screenshot({ caret: "initial",  path: "/tmp/rumah-kita-recipes-editor-tablet.png", fullPage: true });
     await recipe.getByRole("button", { name: "Simpan perubahan", exact: true }).click();
     recipe = page.getByRole("article", { name: "Nasi goreng revisi", exact: true });
     await expect(recipe).toBeVisible();
@@ -384,7 +436,7 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     await chooseTuesday();
     await expect(lunch.getByText("Makan di luar", { exact: true })).toBeVisible();
     const originalSlot = await db.query<{id: string}>("select id from public.meal_slots where meal_date='2026-12-01' and meal_type='lunch'");
-    await page.screenshot({ path: "/tmp/rumah-kita-meal-plan-mobile.png", fullPage: true });
+    await page.screenshot({ caret: "initial",  path: "/tmp/rumah-kita-meal-plan-mobile.png", fullPage: true });
     await lunch.getByRole("button", { name: "Ganti / kosongkan", exact: true }).click();
     await dialog.getByLabel("Jenis menu").selectOption("recipe");
     await dialog.getByLabel("Resep", { exact: true }).selectOption(plannedRecipe.rows[0].id);
@@ -404,7 +456,7 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     await expect(lunch.getByText("Sup terbaru", { exact: true })).toBeVisible();
     await page.setViewportSize({ width: 768, height: 1024 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    await page.screenshot({ path: "/tmp/rumah-kita-meal-plan-tablet.png", fullPage: true });
+    await page.screenshot({ caret: "initial",  path: "/tmp/rumah-kita-meal-plan-tablet.png", fullPage: true });
     await page.goto(base + "/recipes");
     const soup = page.getByRole("article", { name: "Sup terbaru", exact: true });
     await soup.getByRole("button", { name: "Hapus", exact: true }).click();
@@ -418,7 +470,7 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     await page.setViewportSize({ width: 1440, height: 1000 });
     await expect(page.getByRole("article")).toHaveCount(21);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    await page.screenshot({ path: "/tmp/rumah-kita-meal-plan-desktop.png", fullPage: true });
+    await page.screenshot({ caret: "initial",  path: "/tmp/rumah-kita-meal-plan-desktop.png", fullPage: true });
     await lunch.getByRole("button", { name: "Ganti / kosongkan", exact: true }).click();
     await expect(dialog.getByLabel("Nama menu")).toHaveValue("Sup uji");
     await dialog.getByRole("button", { name: "Kosongkan slot", exact: true }).click();
@@ -466,11 +518,11 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
       await page.keyboard.press("Tab");
       const focus = await page.evaluate(() => {
         const element = document.activeElement;
-        if (!element || element === document.body) return false;
+        if (!element || element === document.body) return { visible: false, element: "body" };
         const style = getComputedStyle(element);
-        return style.outlineStyle !== "none" && parseFloat(style.outlineWidth) >= 2;
+        return { visible: style.outlineStyle !== "none" && parseFloat(style.outlineWidth) >= 2, element: element.outerHTML.slice(0,200), outline: style.outline };
       });
-      assert.equal(focus, true, "Keyboard focus must have a visible outline");
+      assert.equal(focus.visible, true, "Keyboard focus must have a visible outline: " + JSON.stringify(focus));
     }
 
     for (const width of [390, 768, 1280]) {
@@ -491,7 +543,7 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
       await expect(page.getByText("Barang rahasia akun lain", { exact: true })).toHaveCount(0);
       await expect(todayMeals.getByRole("link")).toHaveAttribute("href", `/meal-plan?week=${mondayForDate(today)}`);
       await auditControls();
-      await page.screenshot({ path: `/tmp/rumah-kita-dashboard-${width}.png`, fullPage: true });
+      await page.screenshot({ caret: "initial",  path: `/tmp/rumah-kita-dashboard-${width}.png`, fullPage: true });
       const nav = page.getByRole("navigation", { name: "Navigasi utama", exact: true });
       await expect(nav).toHaveCount(1);
       await expect(nav.getByRole("link", { name: "Beranda", exact: true })).toHaveAttribute("aria-current", "page");
@@ -522,6 +574,97 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
       await expect(page).toHaveURL(base + "/essentials?filter=to_buy");
       await expect(page.getByRole("button", { name: /^Perlu Dibeli \(/ })).toHaveAttribute("aria-pressed", "true");
     }
+
+    // Cash flow: all report calculations are real SQL, and all writes use the app API.
+    await db.query(`insert into public.finance_transactions(owner_id,transaction_date,title,kind,person,category,amount,status)
+      values ($1,'2026-10-01','Saldo awal uji','opening','dika','saldo_awal',200000,'paid')`,[owner]);
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.goto(base + "/cash-flow?month=2026-11");
+    await expect(page.getByRole("heading", { name: "Cash flow", exact: true })).toBeVisible();
+    async function addTransaction(title: string, kind: string, person: string, amount: string, status = "paid") {
+      await page.getByRole("button", { name: "Tambah transaksi", exact: true }).click();
+      const editor = page.getByRole("dialog");
+      await editor.getByLabel("Keterangan", { exact: true }).fill(title);
+      await editor.getByLabel("Jenis transaksi", { exact: true }).selectOption(kind);
+      await editor.getByLabel(kind === "income" ? "Dana masuk ke" : "Sumber uang", { exact: true }).selectOption(person);
+      await editor.getByLabel("Nominal (Rp)", { exact: true }).fill(amount);
+      await editor.getByLabel("Tanggal transaksi", { exact: true }).fill("2026-11-05");
+      await editor.getByLabel("Status", { exact: true }).selectOption(status);
+      await editor.getByRole("button", { name: "Simpan", exact: true }).click();
+      await expect(editor).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Tambah transaksi", exact: true })).toBeEnabled();
+    }
+    await addTransaction("Gaji Dika uji","income","dika","1000000");
+    await addTransaction("Gaji Affi uji","income","affi","500000");
+    await addTransaction("Belanja Dika uji","expense","dika","100000");
+    await addTransaction("Rencana Affi uji","expense","affi","200000","pending");
+    await addTransaction("Transfer uji","transfer","dika","50000");
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Tambah transaksi", exact: true })).toBeEnabled();
+    await expect(page.getByText("Saldo Dika",{exact:true}).locator("..")).toContainText(rupiah("1050000"));
+    await expect(page.getByText("Saldo Affi",{exact:true}).locator("..")).toContainText(rupiah("550000"));
+    await expect(page.getByText("Sisa rencana Affi",{exact:true}).locator("..")).toContainText(rupiah("350000"));
+    await expect(page.getByRole("region",{name:"Tabel kategori pengeluaran"})).toContainText("Groceries");
+    await auditControls();
+    await page.screenshot({ caret: "initial", path:"/tmp/rumah-kita-cash-flow-390.png",fullPage:true});
+    await page.getByRole("button",{name:"Transaksi",exact:true}).click();
+    const txRow = page.getByRole("listitem").filter({has:page.getByRole("heading",{name:"Belanja Dika uji",exact:true})});
+    await txRow.getByRole("button",{name:"Ubah / hapus",exact:true}).click();
+    await page.getByRole("dialog").getByLabel("Nominal (Rp)",{exact:true}).fill("150000");
+    rejectWrite=true;
+    await page.getByRole("dialog").getByRole("button",{name:"Simpan",exact:true}).click();
+    await expect(page.getByRole("dialog").getByRole("alert")).toContainText("Perubahan ditolak");
+    await expect(page.getByRole("dialog").getByLabel("Nominal (Rp)",{exact:true})).toHaveValue("150000");
+    await page.getByRole("dialog").getByRole("button",{name:"Simpan",exact:true}).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(txRow).toContainText(rupiah("150000"));
+    await page.getByRole("button",{name:"Tambah utang / piutang",exact:true}).click();
+    let financeEditor=page.getByRole("dialog");
+    await financeEditor.getByLabel("Keterangan",{exact:true}).fill("Cicilan uji");
+    await financeEditor.getByLabel("Penanggung / pemilik dana",{exact:true}).selectOption("affi");
+    await financeEditor.getByLabel("Pokok (Rp)",{exact:true}).fill("300000");
+    await financeEditor.getByLabel("Tanggal mulai",{exact:true}).fill("2026-11-01");
+    await financeEditor.getByLabel("Cicilan pertama",{exact:true}).fill("2026-11-01");
+    await financeEditor.getByLabel("Jumlah cicilan",{exact:true}).fill("3");
+    await financeEditor.getByLabel("Pihak lain",{exact:true}).fill("Toko uji");
+    await financeEditor.getByLabel("Jatuh tempo (opsional)",{exact:true}).fill("2027-01-01");
+    await financeEditor.getByRole("button",{name:"Simpan",exact:true}).click();
+    await expect(financeEditor).toHaveCount(0);
+    await page.getByRole("button",{name:"Debt tracker",exact:true}).click();
+    const debtCard=page.getByRole("article",{name:"Cicilan uji",exact:true});
+    await expect(debtCard).toContainText(rupiah("300000"));
+    await debtCard.locator("summary").click();
+    await debtCard.getByRole("button",{name:"Bayar cicilan 1",exact:true}).click();
+    financeEditor=page.getByRole("dialog");
+    await expect(financeEditor.getByLabel("Nominal (Rp)",{exact:true})).toHaveValue("100000");
+    await financeEditor.getByLabel("Tanggal transaksi",{exact:true}).fill("2026-11-05");
+    await financeEditor.getByRole("button",{name:"Simpan",exact:true}).click();
+    await expect(financeEditor).toHaveCount(0);
+    await expect(debtCard).toContainText("Sisa " + rupiah("200000"));
+    await expect(debtCard.getByRole("progressbar")).toHaveAttribute("aria-valuenow","33.33");
+    await page.setViewportSize({width:768,height:1024});
+    await auditControls();
+    await page.screenshot({ caret: "initial", path:"/tmp/rumah-kita-cash-flow-debts-768.png",fullPage:true});
+    await page.reload();
+    await page.getByRole("button",{name:"Debt tracker",exact:true}).click();
+    await expect(debtCard).toContainText("Sisa " + rupiah("200000"));
+    await page.getByRole("link",{name:"Bulan berikutnya",exact:true}).click();
+    await expect(page).toHaveURL(base+"/cash-flow?month=2026-12");
+    await expect(page.getByText("Saldo Dika",{exact:true}).locator("..")).toContainText(rupiah("1000000"));
+    await expect(page.getByText("Saldo Affi",{exact:true}).locator("..")).toContainText(rupiah("450000"));
+    await page.setViewportSize({width:1280,height:900});
+    await auditControls();
+    await page.screenshot({ caret: "initial", path:"/tmp/rumah-kita-cash-flow-1280.png",fullPage:true});
+    await page.getByRole("link",{name:"Bulan sebelumnya",exact:true}).click();
+    await expect(page).toHaveURL(base+"/cash-flow?month=2026-11");
+    await page.getByRole("button",{name:"Transaksi",exact:true}).click();
+    await txRow.getByRole("button",{name:"Ubah / hapus",exact:true}).click();
+    await page.getByRole("dialog").getByRole("button",{name:"Hapus",exact:true}).click();
+    await page.getByRole("dialog").getByRole("button",{name:"Ya, hapus",exact:true}).click();
+    await expect(txRow).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByText("Saldo Dika",{exact:true}).locator("..")).toContainText(rupiah("1150000"));
+    assert.deepEqual(runtimeErrors, [], "Browser runtime and hydration errors");
   } finally {
     await browser?.close();
     if (child?.pid) {

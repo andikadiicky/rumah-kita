@@ -6,7 +6,7 @@ import type { HouseholdCommand } from "@/lib/household/commands";
 export const buttonClass = "min-h-11 rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium hover:bg-stone-100 disabled:cursor-wait disabled:opacity-50";
 export const inputClass = "min-h-11 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-base";
 export type WriteResult = { ok: boolean; message?: string; login?: boolean };
-export type Save = (command: HouseholdCommand) => Promise<WriteResult>;
+export type Save<Command = HouseholdCommand> = (command: Command) => Promise<WriteResult>;
 
 export function MutationError({ result }: { result: WriteResult | null }) {
   if (!result || result.ok) return null;
