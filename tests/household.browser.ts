@@ -55,7 +55,12 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
           const lower = bounds.find((b) => b.startsWith("gte."))?.slice(4);
           const upper = bounds.find((b) => b.startsWith("lt."))?.slice(3);
           assert.ok(lower && upper);
-          const records = await db.query(`select id,transaction_date::text,title,kind,person,destination,category,amount,status,debt_id,notes,created_at from public.finance_transactions where transaction_date >= $1 and transaction_date < $2 order by transaction_date desc,created_at desc,id`, [lower, upper]);
+          const category = url.searchParams.get("category")?.slice(3);
+          if (category) {
+            assert.equal(url.searchParams.get("kind"), "eq.expense");
+            assert.equal(url.searchParams.get("status"), "in.(paid,pending)");
+          }
+          const records = await db.query(`select id,transaction_date::text,title,kind,person,destination,category,amount,status,debt_id,notes,created_at from public.finance_transactions where transaction_date >= $1 and transaction_date < $2 and ($3::text is null or (category=$3 and kind='expense' and status in ('paid','pending'))) order by transaction_date desc,created_at desc,id`, [lower, upper, category ?? null]);
           const offset = Number(url.searchParams.get("offset") ?? 0);
           const limit = Number(url.searchParams.get("limit") ?? 50);
           response.setHeader("Content-Range", `${offset}-${Math.max(offset,offset+Math.min(records.rows.length,limit)-1)}/${records.rows.length}`);
@@ -258,6 +263,7 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
       headers: { Origin: base }, data: { entity: "transaction", action: "delete", data: { id: "11111111-1111-4111-8111-111111111111" } },
     });
     assert.equal(financeGuest.status(), 401);
+    assert.equal((await guest.request.get(base + "/api/finance/category-details?month=2026-11&category=groceries")).status(), 401);
     await guest.close();
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await context.addCookies([{
@@ -607,6 +613,43 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     await expect(page.getByText("Saldo Affi",{exact:true}).locator("..")).toContainText(rupiah("550000"));
     await expect(page.getByText("Sisa rencana Affi",{exact:true}).locator("..")).toContainText(rupiah("350000"));
     await expect(page.getByRole("region",{name:"Tabel kategori pengeluaran"})).toContainText("Groceries");
+    await page.getByRole("button", { name: "Rincian kategori Groceries", exact: true }).click();
+    const details = page.getByRole("dialog", { name: "Rincian Groceries", exact: true });
+    await expect(details).toContainText("2 transaksi");
+    await expect(details).toContainText("Belanja Dika uji");
+    await expect(details).toContainText("Rencana Affi uji");
+    await expect(details).toContainText(rupiah("100000"));
+    await expect(details).toContainText(rupiah("200000"));
+    await expect(details).not.toContainText("Gaji Dika uji");
+    await expect(details).not.toContainText("Transfer uji");
+    for (const width of [390, 768, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await details.getByRole("button", { name: "Tutup", exact: true }).focus();
+      await auditControls();
+    }
+    await details.getByRole("button", { name: "Tutup", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Rincian kategori Groceries", exact: true })).toBeFocused();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const category = await db.query<{code:string}>("insert into public.finance_categories(owner_id,label) values ($1,'Rincian banyak') returning code", [owner]);
+    const detailCode = category.rows[0].code;
+    await db.query(`insert into public.finance_transactions(owner_id,transaction_date,title,kind,person,category,amount,status)
+      select $1,'2026-11-01','Rincian transaksi ' || n,'expense','dika',$2,n*1000,'pending' from generate_series(1,51) n`, [owner, detailCode]);
+    await db.query(`insert into public.finance_transactions(owner_id,transaction_date,title,kind,person,category,amount,status) values
+      ($1,'2026-11-01','Dibatalkan tersembunyi','expense','dika',$2,1000,'cancelled'),
+      ($1,'2026-10-01','Bulan lain tersembunyi','expense','dika',$2,1000,'pending'),
+      ($1,'2026-11-01','Income tersembunyi','income','dika',$2,1000,'pending')`, [owner, detailCode]);
+    await page.reload();
+    await page.getByRole("button", { name: "Rincian kategori Rincian banyak", exact: true }).click();
+    const manyDetails = page.getByRole("dialog", { name: "Rincian Rincian banyak", exact: true });
+    await expect(manyDetails).toContainText("51 transaksi");
+    await expect(manyDetails.getByRole("listitem")).toHaveCount(50);
+    await expect(manyDetails).not.toContainText("tersembunyi");
+    await manyDetails.getByRole("button", { name: "Berikutnya", exact: true }).click();
+    await expect(manyDetails).toContainText("Halaman 2 dari 2");
+    await expect(manyDetails.getByRole("listitem")).toHaveCount(1);
+    await manyDetails.getByRole("button", { name: "Tutup", exact: true }).click();
+    await db.query("delete from public.finance_transactions where category=$1", [detailCode]);
+    await page.reload();
     await expect(page.getByRole("heading",{name:"Tren 12 bulan",exact:true})).toHaveCount(0);
     await expect(page.getByRole("heading",{name:"Yang perlu diperhatikan",exact:true})).toHaveCount(0);
     await expect(page.getByRole("img",{name:/Diagram pie spending/})).toBeVisible();

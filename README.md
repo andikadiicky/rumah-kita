@@ -513,6 +513,10 @@ dari klien. Pesan error SQL tidak diteruskan ke browser.
 - Filter sumber/status berlaku pada halaman ledger yang sedang ditampilkan
   (50 transaksi per halaman); ringkasan dan pivot tetap menghitung seluruh data
   bulan melalui PostgreSQL, tidak dibatasi halaman PostgREST 1.000 baris.
+- Pilih **Lihat rincian** pada kategori pivot untuk melihat nama transaksi, tanggal,
+  sumber dana, status, catatan, dan nominal per transaksi. Rincian mengikuti bulan
+  laporan, mencakup paid/pending saja, dan memiliki halaman sendiri (50 baris),
+  terpisah dari halaman ledger. Tidak memerlukan migrasi SQL tambahan.
 - Pie chart mengikuti total kolom Paid pada pivot kategori bulan terpilih,
   lengkap dengan legenda nominal dan persentase. Pending tidak masuk pie.
 - Tren 12 bulan dan card Yang perlu diperhatikan sudah dihapus. Riwayat tetap
