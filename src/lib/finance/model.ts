@@ -4,7 +4,7 @@ import { todayInJakarta } from "../date";
 export const people = { dika: "Dika", affi: "Affi" } as const;
 export const kinds = { income: "Pemasukan", expense: "Pengeluaran", transfer: "Transfer Dika–Affi", opening: "Saldo awal" } as const;
 export const categories = {
-  gaji: "Gaji", bonus: "Bonus", usaha: "Usaha", hadiah: "Hadiah", pinjaman: "Pinjaman",
+  gaji: "Gaji", bonus: "Bonus", usaha: "Usaha", hadiah: "Hadiah", hutang: "Hutang",
   kewajiban: "Kewajiban", piutang: "Piutang", subscription: "Subscription", rumah: "Rumah",
   wifi: "WiFi", listrik: "Listrik", uang_sangu: "Uang sangu", groceries: "Groceries",
   savings: "Savings", transportasi: "Transportasi", kesehatan: "Kesehatan", pendidikan: "Pendidikan",
@@ -13,7 +13,9 @@ export const categories = {
 } as const;
 export const statuses = { paid: "Sudah dibayar / diterima", pending: "Pending", cancelled: "Dibatalkan" } as const;
 export type Person = keyof typeof people;
-export type Category = keyof typeof categories;
+export type Category = string;
+export type FinanceCategory = { id: string; code: string; label: string };
+export type DebtPayment = { id: string; debt_id: string; payment_date: string; amount: number; status: Status; notes: string };
 export type Kind = keyof typeof kinds;
 export type Status = keyof typeof statuses;
 export type FinanceTransaction = {
@@ -27,7 +29,8 @@ export type Debt = {
 export type FinanceReport = {
   income: string; spending: string; pending: string; balances: { person: Person; opening: string; closing: string; reserved: string }[];
   pivot: { category: Category; dika: string; affi: string; paid: string; pending: string }[];
-  history: { month: string; income: string; spending: string; pending: string }[];
+  categories: FinanceCategory[];
+  payments: DebtPayment[];
   debts: Debt[];
 };
 const id = z.uuid();
@@ -37,7 +40,7 @@ const amount = z.number().int().positive().max(999_999_999_999);
 const person = z.enum(["dika", "affi"]);
 const transaction = z.strictObject({
   id: id.optional(), transaction_date: date, title: text, kind: z.enum(["income", "expense", "transfer", "opening"]),
-  person, destination: person.nullable().default(null), category: z.enum(Object.keys(categories) as [Category, ...Category[]]),
+  person, destination: person.nullable().default(null), category: z.string().regex(/^[a-z][a-z0-9_]{0,79}$/).refine((v) => v !== "pinjaman"),
   amount, status: z.enum(["paid", "pending", "cancelled"]), debt_id: id.nullable().default(null), notes: z.string().trim().max(2000).default(""),
 }).superRefine((v, ctx) => {
   if ((v.kind === "transfer" && (!v.destination || v.destination === v.person || v.category !== "transfer" || v.debt_id)) ||
@@ -57,6 +60,9 @@ export const financeCommandSchema = z.union([
   z.strictObject({ entity: z.literal("transaction"), action: z.literal("delete"), data: z.strictObject({ id }) }),
   z.strictObject({ entity: z.literal("debt"), action: z.literal("save"), data: debt }),
   z.strictObject({ entity: z.literal("debt"), action: z.literal("delete"), data: z.strictObject({ id }) }),
+  z.strictObject({ entity: z.literal("category"), action: z.literal("save"), data: z.strictObject({ id: id.optional(), label: z.string().trim().min(1).max(80) }) }),
+  z.strictObject({ entity: z.literal("debt_payment"), action: z.literal("save"), data: z.strictObject({ id: id.optional(), debt_id: id, payment_date: date, amount, status: z.enum(["paid", "pending", "cancelled"]), notes: z.string().trim().max(2000).default("") }) }),
+  z.strictObject({ entity: z.literal("debt_payment"), action: z.literal("delete"), data: z.strictObject({ id }) }),
 ]);
 export type FinanceCommand = z.infer<typeof financeCommandSchema>;
 export function rupiah(value: string | number | bigint): string {
@@ -104,4 +110,26 @@ export function debtIsOverdue(debt: Debt, cutoff: string): boolean {
     (!!debt.due_date && debt.due_date < cutoff) ||
     debtSchedule(debt).some((part) => part.date < cutoff && part.remaining > BigInt(0))
   );
+}
+
+/** Commas are grouping separators in editable inputs; values remain integer IDR. */
+export function moneyInputDigits(value: string): string | null {
+  const raw = value.replace(/^Rp\s*/i, "").replace(/[,\s]/g, "");
+  return /^\d{0,12}$/.test(raw) ? raw.replace(/^0+(?=\d)/, "") : null;
+}
+export function formatMoneyInput(value: string): string {
+  return value.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+export function categoryColor(code: string): string {
+  const hash = [...code].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 0);
+  return `hsl(${hash % 360} 58% 38%)`;
+}
+export function categorySlices(rows: FinanceReport["pivot"]) {
+  const positive = rows.filter((r) => BigInt(r.paid) > BigInt(0));
+  const total = positive.reduce((sum, r) => sum + BigInt(r.paid), BigInt(0));
+  let cumulative = BigInt(0);
+  return positive.map((r) => {
+    const start = percent(cumulative, total); cumulative += BigInt(r.paid);
+    return { ...r, start, end: percent(cumulative, total), share: percent(r.paid, total), color: categoryColor(r.category) };
+  });
 }

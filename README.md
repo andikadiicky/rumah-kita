@@ -259,7 +259,7 @@ git ls-files -- .env.local
 
 Perintah terakhir harus tidak mengeluarkan nama file. `.env.example` hanya
 berisi dua nama variabel dengan nilai kosong. Pastikan file berikut masuk commit:
-`package.json`, `package-lock.json`, seluruh `src/`, seluruh migrasi SQL (termasuk `003_cash_flow.sql`),
+`package.json`, `package-lock.json`, seluruh `src/`, seluruh migrasi SQL (termasuk `003_cash_flow.sql` dan `004_finance_categories_and_tracker.sql`),
 `.env.example`, `.gitignore`, konfigurasi Next.js/TypeScript/ESLint/PostCSS,
 dan README. `.env.local`, file `.env` lain, `.vercel/`, private key, serta file
 credential JSON lokal diabaikan. Jangan memakai `git add -f` untuk file rahasia.
@@ -299,7 +299,7 @@ jangan mengimpor `main` lama yang hanya berisi scaffold.
 
 ### 2. Siapkan database Production
 
-Di proyek Supabase **Production**, jalankan migrasi `001`, `002`, dan `003` melalui **SQL Editor**
+Di proyek Supabase **Production**, jalankan migrasi `001`–`004` melalui **SQL Editor**
 sesuai urutan pada bagian Menyiapkan Supabase Free di atas, hanya jika belum
 pernah berhasil diterapkan. Vercel tidak menjalankan migrasi SQL ini otomatis.
 Aktifkan provider Email, nonaktifkan signup publik dan anonymous sign-ins,
@@ -378,7 +378,7 @@ perlu dikonfigurasi jika menambah OAuth, magic link, atau pemulihan password.
 Preview yang membutuhkan login dan data harus diarahkan ke proyek Supabase
 **development/preview** terpisah, bukan database Production:
 
-1. Buat proyek Supabase kedua. Terapkan seluruh migrasi (`001`–`003`) di proyek tersebut dan
+1. Buat proyek Supabase kedua. Terapkan seluruh migrasi (`001`–`004`) di proyek tersebut dan
    buat akun pengujian sendiri; akun dan UUID pengguna tidak otomatis disalin
    dari Production. Nonaktifkan signup publik juga.
 2. Di **Vercel Project → Settings → Environment Variables**, tambahkan nama
@@ -461,7 +461,7 @@ di atas, bukan hasil yang sudah diverifikasi live.
 ## Cash flow dan Debt Tracker
 
 Menu **Keuangan / Cash flow** tersedia di `/cash-flow?month=YYYY-MM`. Fitur ini
-memakai dua tabel baru pada proyek Supabase yang sama, bukan proyek/database
+memakai tabel keuangan terpisah pada proyek Supabase yang sama, bukan proyek/database
 berbayar tambahan. Koneksi tetap menggunakan dua environment variable Supabase
 publik yang sudah ada dan sesi pemilik akun.
 
@@ -470,15 +470,16 @@ publik yang sudah ada dan sesi pemilik akun.
 1. Commit/deploy kode fitur ini setelah ditinjau.
 2. Pada proyek Supabase yang sesuai (development, Preview, atau Production), buka
    **SQL Editor → New query**.
-3. Jika migrasi `001_initial.sql` dan `002_household_backend.sql` sudah pernah
-   berhasil dijalankan, **jangan jalankan ulang**. Jalankan seluruh isi
-   `supabase/migrations/003_cash_flow.sql` saja, satu kali.
-4. Untuk proyek kosong, jalankan `001`, `002`, lalu `003` berurutan. Migrasi ketiga
+3. Jika migrasi `001_initial.sql`, `002_household_backend.sql`, dan `003_cash_flow.sql`
+   sudah berhasil, **jangan jalankan ulang**. Jalankan seluruh isi
+   `supabase/migrations/004_finance_categories_and_tracker.sql` saja, satu kali.
+4. Untuk proyek kosong, jalankan `001`, `002`, `003`, lalu `004` berurutan. Setiap migrasi
    memakai transaksi; jika gagal, selesaikan penyebabnya sebelum menjalankan ulang.
 5. Restart aplikasi lokal / redeploy Vercel setelah kode diperbarui. Tidak ada
    service-role key, variabel database baru, atau signup tambahan yang diperlukan.
 
-Migrasi membuat `finance_transactions`, `finance_debts`, validasi pembayaran,
+Skema memakai `finance_transactions`, `finance_debts`, `finance_debt_payments`,
+`finance_categories`, validasi catatan pembayaran,
 serta RPC `finance_report(date)`. RLS membatasi `owner_id = auth.uid()` untuk
 seluruh tabel dan laporan. Role anonim tidak memiliki akses. Endpoint baru
 `POST /api/finance` memverifikasi pengguna, origin, dan Zod; owner tidak diterima
@@ -488,12 +489,12 @@ dari klien. Pesan error SQL tidak diteruskan ke browser.
 
 - Sumber dana tetap **Dika** dan **Affi**, di bawah satu akun rumah tangga. Ini
   bukan dua akun Supabase yang berbeda.
-- Nominal adalah integer Rupiah positif, tanpa sen/desimal. Masukkan angka tanpa
-  pemisah, misalnya `100000`. Batas satu catatan Rp999.999.999.999. Agregat uang
+- Nominal adalah integer Rupiah positif, tanpa sen/desimal. Input nominal dan pokok otomatis memakai koma sebagai pemisah ribuan,
+  misalnya `Rp 1,000,000`, tanpa sen/desimal; yang disimpan tetap integer `1000000`. Batas satu catatan Rp999.999.999.999. Agregat uang
   dikirim sebagai string lalu diformat dengan BigInt agar total tetap presisi.
 - Jenis transaksi: pemasukan, pengeluaran, transfer Dika–Affi, dan saldo awal.
   Catat saldo awal sekali saat mulai menggunakan aplikasi, bukan tiap bulan.
-- Status **paid** berarti uang sudah dibayar/diterima; **pending** adalah rencana
+- Transaksi baru default **pending**; saldo awal tetap paid. Status **paid** berarti uang sudah dibayar/diterima; **pending** adalah rencana
   yang belum berpindah; **cancelled** tidak masuk perhitungan aktual/rencana.
 - Saldo aktual menghitung semua transaksi paid sampai akhir bulan terpilih,
   termasuk saldo yang dibawa dari bulan sebelumnya. Saldo rencana menyesuaikan
@@ -508,14 +509,20 @@ dari klien. Pesan error SQL tidak diteruskan ke browser.
   pisahkan nominal paid dan nominal pending agar komitmen tidak terhitung dua kali.
 - Kategori mencakup kewajiban, piutang, subscription, rumah, WiFi, listrik, uang
   sangu, groceries, savings, transportasi, kesehatan, pendidikan, hiburan, makan
-  di luar, donasi, gaji, bonus, usaha, hadiah, pinjaman, dan lainnya.
+  di luar, donasi, gaji, bonus, usaha, hadiah, hutang, dan lainnya.
 - Filter sumber/status berlaku pada halaman ledger yang sedang ditampilkan
   (50 transaksi per halaman); ringkasan dan pivot tetap menghitung seluruh data
   bulan melalui PostgreSQL, tidak dibatasi halaman PostgREST 1.000 baris.
-- Grafik menampilkan 12 bulan sampai bulan terpilih. Pilih bulan lama di URL,
-  pemilih bulan, atau grafik untuk melihat sejarah lain. Bulan yang belum selesai
-  tidak sebanding dengan bulan penuh. Simulasi pengurangan spending bukan prediksi
-  otomatis dan tidak mengubah catatan atau anggaran.
+- Pie chart mengikuti total kolom Paid pada pivot kategori bulan terpilih,
+  lengkap dengan legenda nominal dan persentase. Pending tidak masuk pie.
+- Tren 12 bulan dan card Yang perlu diperhatikan sudah dihapus. Riwayat tetap
+  tersedia melalui pemilih bulan/URL; data lama tidak dihapus.
+- Tab Kategori mendukung tambah dan ubah nama kategori per akun. Kode stabil
+  menjaga referensi transaksi. Rename berlaku pada dropdown, pivot, pie chart,
+  dan histori. Kategori bawaan Pinjaman dan seluruh transaksi berkode pinjaman
+  dimigrasikan menjadi Hutang/hutang. Nama kategori harus unik per akun.
+- Pemilih bulan menggunakan baris panah–input–panah dan baris tombol aksi di
+  ponsel; label visual Bulan laporan dihapus, label aksesibilitas tetap ada.
 
 ### Debt Tracker dan cicilan
 
@@ -531,20 +538,26 @@ ke tanggal 31 pada Maret. Jadwal ini tidak menghitung bunga otomatis: masukkan
 jumlah kewajiban total yang ingin dilacak sebagai pokok. Bila perlu nilai bunga
 terpisah, catat sebagai pengeluaran tersendiri.
 
-**Bayar cicilan** atau **Catat pembayaran** membuat transaksi terkait utang:
-payable menjadi pengeluaran dari pemilik dana, receivable menjadi pemasukan ke
-pemilik dana. Tidak ada tabel pembayaran kedua yang menjumlahkan uang yang sama
-lagi. Hanya pembayaran paid mengurangi pokok; pembayaran dialokasikan ke jadwal
-tertua terlebih dahulu. Pembayaran sebagian, status Terlambat, Lunas, progress,
-dan sisa diperlihatkan berdasarkan posisi akhir bulan yang dipilih. Jadwal
-cicilan belum menjadi spending pending sampai dicatat sebagai transaksi; gunakan
-status pending saat baru merencanakan pembayaran.
+**Catat cicilan** dan **Catat pembayaran** hanya membuat record pada
+`finance_debt_payments`, bukan transaksi kas. Menambah, mengedit, atau menghapus
+record tracker tidak mengurangi/menambah saldo Dika/Affi dan tidak mengubah
+income, spending, pending, pivot, atau pie chart. Pengeluaran/pemasukan yang nyata
+harus dicatat tersendiri pada tab Transaksi. Pembayaran paid mengurangi sisa pokok;
+pending/cancelled tidak menguranginya. Riwayat record dapat diedit/dihapus dari
+bagian Riwayat catatan pembayaran.
 
-Database menolak pembayaran di atas pokok, sumber dana/jenis yang tidak cocok,
-tanggal pembayaran sebelum awal utang, referensi utang milik akun lain, serta
-pengurangan pokok di bawah jumlah yang sudah dibayar. Pembayaran diserialisasi
-per utang melalui row lock. Menghapus catatan utang mempertahankan transaksi
-pembayarannya (tautan utang dilepas), sehingga saldo historis tidak hilang.
+Migrasi `004` menyalin informasi pembayaran yang dahulu terhubung ke utang menjadi
+record tracker terpisah. **Transaksi kas lama tetap ada dan tidak otomatis
+hapus/dibatalkan/dibalik.** Jika sebelumnya sudah ada transaksi manual yang sama,
+tinjau kemungkinan duplikat di ledger sebelum menghapus transaksi; migrasi tidak
+menebak transaksi mana yang benar. Edit transaksi lama sesudah migrasi tidak
+menyinkronkan record tracker lagi, dan sebaliknya.
+
+Database menolak record pembayaran di atas pokok, tanggal sebelum awal utang,
+referensi utang milik akun lain, dan pengurangan pokok di bawah record paid.
+Menghapus utang menghapus record tracker terkait, tetapi transaksi kas tetap
+ada. Record tracker dan kategori dilindungi RLS per owner; anonymous tidak bisa
+mengaksesnya. Hanya label kategori yang bisa diedit, bukan kode atau owner.
 
 ### Analisis struktur Google Sheet
 
@@ -587,9 +600,21 @@ fixture lokal dan SQL migrasi yang sama: input, reload, edit gagal yang menjaga
 isian, pindah bulan, hapus, pembayaran cicilan, tampilan 390/768/1280 px, label,
 fokus, target sentuh, dan API tamu 401. Tidak memakai data keuangan live.
 
-Sesudah menerapkan `003` ke proyek development, ulangi dengan record disposable:
+Sesudah menerapkan `003` dan `004` ke proyek development, ulangi dengan record disposable:
 catat saldo awal masing-masing sumber, income, spending paid dan pending,
-transfer internal, utang/piutang, serta cicilan parsial. Verifikasi dari perangkat
+transfer internal, utang/piutang, serta cicilan parsial tracker tanpa perubahan saldo. Verifikasi dari perangkat
 kedua dengan akun yang sama. Akun Supabase kedua harus tidak bisa melihat/mengubah
 catatan pertama atau mengakses laporan pertamanya. Migrasi dan smoke test live
 memerlukan akses proyek Supabase; belum dijalankan otomatis dalam implementasi.
+
+### Perubahan cash flow versi 004
+
+Jalankan migrasi `004_finance_categories_and_tracker.sql` pada Supabase melalui
+**SQL Editor → New query**, sesudah `003`, sebelum deploy kode baru. Tidak perlu
+menambah environment variable. Migrasi dan kode tidak diterapkan ke database
+live secara otomatis oleh perubahan ini.
+
+Tes baru memverifikasi salinan record lama tanpa perubahan saldo, tracker CRUD
+independen dari cash ledger, rename Pinjaman→Hutang untuk data historis,
+kategori kustom dan RLS, format koma, pie berdasarkan Paid, status default Pending,
+pengembalian fokus dialog, dan pemilih bulan pada 390/768/1280 px.
