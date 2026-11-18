@@ -47,8 +47,8 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
         const result = await db.query<{report: unknown}>("select public.finance_report($1) as report", [body.p_month]);
         return send(200, result.rows[0].report);
       }
-      if (["/rest/v1/finance_transactions", "/rest/v1/finance_debts"].includes(url.pathname)) {
-        const table = url.pathname.endsWith("finance_transactions") ? "finance_transactions" : "finance_debts";
+      if (["/rest/v1/finance_transactions", "/rest/v1/finance_debts", "/rest/v1/finance_categories", "/rest/v1/finance_debt_payments"].includes(url.pathname)) {
+        const table = url.pathname.split("/").at(-1)!;
         if (request.method === "GET") {
           assert.equal(url.searchParams.get("owner_id"), `eq.${owner}`);
           const bounds = url.searchParams.getAll("transaction_date");
@@ -71,7 +71,7 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
           result = await db.query(`delete from public.${table} where owner_id=$1 and id=$2 returning id`, [owner,id]);
         } else {
           const fields = Object.keys(body);
-          const allowed = new Set(["owner_id","transaction_date","title","kind","person","destination","category","amount","status","debt_id","notes","direction","counterparty","principal","start_date","due_date","installment_count","first_payment_date"]);
+          const allowed = new Set(["owner_id","transaction_date","title","kind","person","destination","category","amount","status","debt_id","notes","direction","counterparty","principal","start_date","due_date","installment_count","first_payment_date","payment_date","label"]);
           assert.ok(fields.every((field) => allowed.has(field)));
           const values = fields.map((field) => body[field]);
           if (request.method === "POST") {
@@ -187,7 +187,7 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
       grant usage on schema auth,public to authenticated;
       grant execute on function auth.uid() to authenticated;
       insert into auth.users values ('${owner}'),('${other}');`);
-    for (const file of ["001_initial.sql", "002_household_backend.sql", "003_cash_flow.sql"]) {
+    for (const file of ["001_initial.sql", "002_household_backend.sql", "003_cash_flow.sql", "004_finance_categories_and_tracker.sql"]) {
       await db.exec(await readFile(join(process.cwd(), "supabase/migrations", file), "utf8"));
     }
     await db.exec(`insert into public.essentials(owner_id,name,status) values
@@ -584,12 +584,14 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     async function addTransaction(title: string, kind: string, person: string, amount: string, status = "paid") {
       await page.getByRole("button", { name: "Tambah transaksi", exact: true }).click();
       const editor = page.getByRole("dialog");
+      await expect(editor.getByLabel("Status", { exact: true })).toHaveValue("pending");
       await editor.getByLabel("Keterangan", { exact: true }).fill(title);
       await editor.getByLabel("Jenis transaksi", { exact: true }).selectOption(kind);
       await editor.getByLabel(kind === "income" ? "Dana masuk ke" : "Sumber uang", { exact: true }).selectOption(person);
       await editor.getByLabel("Nominal (Rp)", { exact: true }).fill(amount);
       await editor.getByLabel("Tanggal transaksi", { exact: true }).fill("2026-11-05");
       await editor.getByLabel("Status", { exact: true }).selectOption(status);
+      await expect(editor.getByLabel("Nominal (Rp)", { exact: true })).toHaveValue(Number(amount).toLocaleString("en-US"));
       await editor.getByRole("button", { name: "Simpan", exact: true }).click();
       await expect(editor).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Tambah transaksi", exact: true })).toBeEnabled();
@@ -605,6 +607,10 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     await expect(page.getByText("Saldo Affi",{exact:true}).locator("..")).toContainText(rupiah("550000"));
     await expect(page.getByText("Sisa rencana Affi",{exact:true}).locator("..")).toContainText(rupiah("350000"));
     await expect(page.getByRole("region",{name:"Tabel kategori pengeluaran"})).toContainText("Groceries");
+    await expect(page.getByRole("heading",{name:"Tren 12 bulan",exact:true})).toHaveCount(0);
+    await expect(page.getByRole("heading",{name:"Yang perlu diperhatikan",exact:true})).toHaveCount(0);
+    await expect(page.getByRole("img",{name:/Diagram pie spending/})).toBeVisible();
+    await expect(page.getByText("Bulan laporan",{exact:true})).toHaveCount(0);
     await auditControls();
     await page.screenshot({ caret: "initial", path:"/tmp/rumah-kita-cash-flow-390.png",fullPage:true});
     await page.getByRole("button",{name:"Transaksi",exact:true}).click();
@@ -614,10 +620,45 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     rejectWrite=true;
     await page.getByRole("dialog").getByRole("button",{name:"Simpan",exact:true}).click();
     await expect(page.getByRole("dialog").getByRole("alert")).toContainText("Perubahan ditolak");
-    await expect(page.getByRole("dialog").getByLabel("Nominal (Rp)",{exact:true})).toHaveValue("150000");
+    await expect(page.getByRole("dialog").getByLabel("Nominal (Rp)",{exact:true})).toHaveValue("150,000");
     await page.getByRole("dialog").getByRole("button",{name:"Simpan",exact:true}).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(txRow).toContainText(rupiah("150000"));
+    await page.getByRole("button",{name:"Kategori",exact:true}).click();
+    await expect(page.getByRole("button",{name:"Ubah kategori Hutang",exact:true})).toBeVisible();
+    await page.getByRole("button",{name:"Tambah kategori",exact:true}).click();
+    await page.getByRole("dialog").getByLabel("Nama kategori").fill("Hobi uji");
+    await page.getByRole("dialog").getByRole("button",{name:"Simpan",exact:true}).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.getByRole("button",{name:"Ubah kategori Hobi uji",exact:true}).click();
+    await page.getByRole("dialog").getByLabel("Nama kategori").fill("Hobi keluarga");
+    await page.getByRole("dialog").getByRole("button",{name:"Simpan",exact:true}).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.getByRole("button",{name:"Ubah kategori Groceries",exact:true}).click();
+    await page.getByRole("dialog").getByLabel("Nama kategori").fill("Belanja rumah");
+    await page.getByRole("dialog").getByRole("button",{name:"Simpan",exact:true}).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.getByRole("button",{name:"Tambah transaksi",exact:true}).click();
+    const customEditor=page.getByRole("dialog");
+    await expect(customEditor.getByLabel("Status",{exact:true})).toHaveValue("pending");
+    await customEditor.getByLabel("Keterangan",{exact:true}).fill("Hobi dengan kategori baru");
+    await customEditor.getByLabel("Nominal (Rp)",{exact:true}).fill("25000");
+    await expect(customEditor.getByLabel("Nominal (Rp)",{exact:true})).toHaveValue("25,000");
+    await customEditor.getByLabel("Nominal (Rp)",{exact:true}).press("End");
+    await customEditor.getByLabel("Nominal (Rp)",{exact:true}).press("Backspace");
+    await expect(customEditor.getByLabel("Nominal (Rp)",{exact:true})).toHaveValue("2,500");
+    await customEditor.getByLabel("Nominal (Rp)",{exact:true}).pressSequentially("0");
+    await expect(customEditor.getByLabel("Nominal (Rp)",{exact:true})).toHaveValue("25,000");
+    await expect(customEditor.getByRole("option",{name:"Pinjaman",exact:true})).toHaveCount(0);
+    await expect(customEditor.getByRole("option",{name:"Hutang",exact:true})).toHaveCount(1);
+    await customEditor.getByLabel("Kategori",{exact:true}).selectOption({label:"Hobi keluarga"});
+    await customEditor.getByLabel("Tanggal transaksi",{exact:true}).fill("2026-11-05");
+    await customEditor.getByRole("button",{name:"Simpan",exact:true}).click();
+    await expect(customEditor).toHaveCount(0);
+    await page.reload();
+    await page.getByRole("button",{name:"Transaksi",exact:true}).click();
+    await expect(page.getByRole("listitem").filter({has:page.getByRole("heading",{name:"Hobi dengan kategori baru",exact:true})})).toContainText("Hobi keluarga");
+    await expect(txRow).toContainText("Belanja rumah");
     await page.getByRole("button",{name:"Tambah utang / piutang",exact:true}).click();
     let financeEditor=page.getByRole("dialog");
     await financeEditor.getByLabel("Keterangan",{exact:true}).fill("Cicilan uji");
@@ -633,15 +674,37 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     await page.getByRole("button",{name:"Debt tracker",exact:true}).click();
     const debtCard=page.getByRole("article",{name:"Cicilan uji",exact:true});
     await expect(debtCard).toContainText(rupiah("300000"));
-    await debtCard.locator("summary").click();
-    await debtCard.getByRole("button",{name:"Bayar cicilan 1",exact:true}).click();
+    await debtCard.locator("summary").filter({hasText:"Jadwal"}).click();
+    await debtCard.getByRole("button",{name:"Catat cicilan 1",exact:true}).click();
     financeEditor=page.getByRole("dialog");
-    await expect(financeEditor.getByLabel("Nominal (Rp)",{exact:true})).toHaveValue("100000");
-    await financeEditor.getByLabel("Tanggal transaksi",{exact:true}).fill("2026-11-05");
+    await expect(financeEditor.getByLabel("Nominal (Rp)",{exact:true})).toHaveValue("100,000");
+    await financeEditor.getByLabel("Tanggal pembayaran",{exact:true}).fill("2026-11-05");
     await financeEditor.getByRole("button",{name:"Simpan",exact:true}).click();
     await expect(financeEditor).toHaveCount(0);
     await expect(debtCard).toContainText("Sisa " + rupiah("200000"));
     await expect(debtCard.getByRole("progressbar")).toHaveAttribute("aria-valuenow","33.33");
+    await debtCard.locator("summary").filter({hasText:"Riwayat catatan pembayaran"}).click();
+    await debtCard.getByRole("button",{name:"Ubah catatan",exact:true}).click();
+    await page.getByRole("dialog").getByLabel("Nominal (Rp)",{exact:true}).fill("50000");
+    await page.getByRole("dialog").getByRole("button",{name:"Simpan",exact:true}).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(debtCard).toContainText("Sisa " + rupiah("250000"));
+    await debtCard.getByRole("button",{name:"Ubah catatan",exact:true}).click();
+    await page.getByRole("dialog").getByRole("button",{name:"Hapus",exact:true}).click();
+    await page.getByRole("dialog").getByRole("button",{name:"Ya, hapus",exact:true}).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(debtCard).toContainText("Sisa " + rupiah("300000"));
+    await debtCard.getByRole("button",{name:"Catat cicilan 1",exact:true}).click();
+    await page.getByRole("dialog").getByLabel("Tanggal pembayaran",{exact:true}).fill("2026-11-05");
+    await page.getByRole("dialog").getByRole("button",{name:"Simpan",exact:true}).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(debtCard).toContainText("Sisa " + rupiah("200000"));
+    const cashAfterTracker = await db.query<{balance: string}>(`select (public.finance_report('2026-11-01')->'balances')::text as balance`);
+    assert.ok(cashAfterTracker.rows[0].balance.includes('550000'),"recording debt payment must not reduce Affi's cash");
+    const payments = await db.query("select id from public.finance_debt_payments");
+    assert.equal(payments.rows.length,1);
+    const ledgerCount = await db.query("select id from public.finance_transactions where debt_id is not null");
+    assert.equal(ledgerCount.rows.length,0,"debt tracker must not create linked cash transactions");
     await page.setViewportSize({width:768,height:1024});
     await auditControls();
     await page.screenshot({ caret: "initial", path:"/tmp/rumah-kita-cash-flow-debts-768.png",fullPage:true});
@@ -651,7 +714,7 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     await page.getByRole("link",{name:"Bulan berikutnya",exact:true}).click();
     await expect(page).toHaveURL(base+"/cash-flow?month=2026-12");
     await expect(page.getByText("Saldo Dika",{exact:true}).locator("..")).toContainText(rupiah("1000000"));
-    await expect(page.getByText("Saldo Affi",{exact:true}).locator("..")).toContainText(rupiah("450000"));
+    await expect(page.getByText("Saldo Affi",{exact:true}).locator("..")).toContainText(rupiah("550000"));
     await page.setViewportSize({width:1280,height:900});
     await auditControls();
     await page.screenshot({ caret: "initial", path:"/tmp/rumah-kita-cash-flow-1280.png",fullPage:true});
