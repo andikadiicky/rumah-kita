@@ -653,6 +653,17 @@ test("household UI: essentials, recipes, meal planning, calendar navigation, das
     await expect(page.getByRole("heading",{name:"Tren 12 bulan",exact:true})).toHaveCount(0);
     await expect(page.getByRole("heading",{name:"Yang perlu diperhatikan",exact:true})).toHaveCount(0);
     await expect(page.getByRole("img",{name:/Diagram pie spending/})).toBeVisible();
+    const pieCanvas = page.locator("canvas[role=img]");
+    await expect(pieCanvas).toBeVisible();
+    const chartBounds = await pieCanvas.boundingBox();
+    assert.ok(chartBounds && chartBounds.width > 100 && chartBounds.height > 100);
+    await page.mouse.move(0, 0);
+    const chartBeforeHover = await pieCanvas.screenshot({ caret: "initial" });
+    await pieCanvas.hover({ position: { x: chartBounds.width / 2, y: chartBounds.height / 4 } });
+    await expect.poll(async () => (await pieCanvas.screenshot({ caret: "initial" })).equals(chartBeforeHover)).toBe(false);
+    await expect(page.getByRole("list", { name: "Legenda pengeluaran per kategori" })).toContainText(rupiah("100000"));
+    await page.mouse.move(0, 0);
+
     await expect(page.getByText("Bulan laporan",{exact:true})).toHaveCount(0);
     await auditControls();
     await page.screenshot({ caret: "initial", path:"/tmp/rumah-kita-cash-flow-390.png",fullPage:true});

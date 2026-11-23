@@ -622,3 +622,11 @@ Tes baru memverifikasi salinan record lama tanpa perubahan saldo, tracker CRUD
 independen dari cash ledger, rename Pinjaman→Hutang untuk data historis,
 kategori kustom dan RLS, format koma, pie berdasarkan Paid, status default Pending,
 pengembalian fokus dialog, dan pemilih bulan pada 390/768/1280 px.
+
+### Grafik pengeluaran dengan Chart.js
+
+Pie pengeluaran memakai Chart.js dengan tooltip Rupiah, persentase, dan
+pembagian sumber dana Dika/Affi. Kategori diurutkan berdasarkan nominal terbesar.
+Grafik hanya menghitung pengeluaran paid pada bulan laporan; pending tidak
+dimasukkan. Legenda nominal dan sumber dana tetap tersedia tanpa interaksi
+dan untuk pembaca layar.
