@@ -1,10 +1,17 @@
 "use client";
 
-import { ArcElement, Chart as ChartJS, Tooltip } from "chart.js";
+import { ArcElement, Chart as ChartJS, Colors, Tooltip } from "chart.js";
 import { Pie } from "react-chartjs-2";
 import { categorySlices, rupiah, type FinanceReport } from "@/lib/finance/model";
 
-ChartJS.register(ArcElement, Tooltip);
+ChartJS.register(ArcElement, Colors, Tooltip);
+
+// Chart.js Colors plugin's default pie palette, shared by the chart and HTML legend.
+const defaultColors = [
+  "rgb(54, 162, 235)", "rgb(255, 99, 132)", "rgb(255, 159, 64)",
+  "rgb(255, 205, 86)", "rgb(75, 192, 192)", "rgb(153, 102, 255)",
+  "rgb(201, 203, 207)",
+];
 
 export function CategoryPie({ report }: { report: FinanceReport }) {
   const slices = categorySlices(report.pivot).sort((a, b) => BigInt(a.paid) > BigInt(b.paid) ? -1 : BigInt(a.paid) < BigInt(b.paid) ? 1 : a.category.localeCompare(b.category));
@@ -19,15 +26,15 @@ export function CategoryPie({ report }: { report: FinanceReport }) {
       <div className="relative mx-auto aspect-square w-full max-w-75">
         <Pie role="img" aria-label={`Diagram pie spending dibayar, total ${rupiah(report.spending)}. Rincian kategori tersedia di legenda.`} data={{
           labels: slices.map((s) => labels[s.category] ?? s.category),
-          datasets: [{ data: slices.map((s) => Number(BigInt(s.paid)) / Number(largest)), backgroundColor: slices.map((s) => s.color), borderColor: "#ffffff", borderWidth: 2, hoverOffset: 8 }],
+          datasets: [{ data: slices.map((s) => Number(BigInt(s.paid)) / Number(largest)), borderColor: "#ffffff", borderWidth: 2, hoverOffset: 8 }],
         }} options={{ responsive: true, maintainAspectRatio: false, layout: { padding: 12 }, animation: false,
-          plugins: { tooltip: { displayColors: true, callbacks: {
+          plugins: { colors: { enabled: true, forceOverride: true }, tooltip: { displayColors: true, callbacks: {
             label: (context) => { const s = slices[context.dataIndex]; return `${rupiah(s.paid)} · ${share(s.share)}`; },
             afterLabel: (context) => { const s = slices[context.dataIndex]; return [`Dika: ${rupiah(s.dika)}`, `Affi: ${rupiah(s.affi)}`]; },
           } } },
         }} />
       </div>
-      <ul aria-label="Legenda pengeluaran per kategori" className="min-w-0 space-y-3">{slices.map((s) => <li key={s.category} className="flex min-w-0 items-start gap-3"><span aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 rounded" style={{ backgroundColor: s.color }} /><div className="min-w-0"><p className="font-medium break-words">{labels[s.category] ?? s.category}</p><p className="text-sm text-stone-600">{rupiah(s.paid)} · {share(s.share)}</p><p className="text-xs leading-5 text-stone-500">Dika {rupiah(s.dika)} · Affi {rupiah(s.affi)}</p></div></li>)}</ul>
+      <ul aria-label="Legenda pengeluaran per kategori" className="min-w-0 space-y-3">{slices.map((s, index) => <li key={s.category} className="flex min-w-0 items-start gap-3"><span aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 rounded" style={{ backgroundColor: defaultColors[index % defaultColors.length] }} /><div className="min-w-0"><p className="font-medium break-words">{labels[s.category] ?? s.category}</p><p className="text-sm text-stone-600">{rupiah(s.paid)} · {share(s.share)}</p><p className="text-xs leading-5 text-stone-500">Dika {rupiah(s.dika)} · Affi {rupiah(s.affi)}</p></div></li>)}</ul>
     </div></> : <p className="rounded-lg bg-stone-50 p-4 text-sm text-stone-600">Belum ada pengeluaran dibayar untuk diagram bulan ini.</p>}
   </section>;
 }
