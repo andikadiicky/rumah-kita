@@ -630,3 +630,12 @@ pembagian sumber dana Dika/Affi. Kategori diurutkan berdasarkan nominal terbesar
 Grafik hanya menghitung pengeluaran paid pada bulan laporan; pending tidak
 dimasukkan. Legenda nominal dan sumber dana tetap tersedia tanpa interaksi
 dan untuk pembaca layar.
+
+### Kategori khusus pada form transaksi
+
+Dropdown kategori menampilkan seluruh katalog, termasuk Transfer dan Saldo awal
+yang namanya sudah diubah. Memilih kategori khusus otomatis menyesuaikan jenis
+transaksi dan menampilkan penerima jika transfer; memilih kategori biasa dari
+jenis khusus kembali menjadi Pengeluaran. Transfer tetap antar sumber dana
+Dika/Affi, termasuk jika kategori dinamai Transfer out. Menu Kategori menjelaskan
+fungsi kategori khusus agar perubahan nama tidak menimbulkan salah pencatatan.

@@ -46,6 +46,12 @@ export function FinanceEditor({ target, categoryOptions, date, save, busy, close
     else if (!tx) setStatus("pending");
     setDestination(person === "dika" ? "affi" : "dika");
   }
+  function changeCategory(value: string) {
+    if (value === "transfer") changeKind("transfer");
+    else if (value === "saldo_awal") changeKind("opening");
+    else if (kind === "transfer" || kind === "opening") changeKind("expense");
+    setCategory(value);
+  }
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setResult(null);
     const common = { ...(item ? { id: item.id } : {}), title, person, notes };
@@ -83,7 +89,9 @@ export function FinanceEditor({ target, categoryOptions, date, save, busy, close
           <p className="text-sm leading-6 text-stone-500 sm:col-span-2">Catatan utang/piutang tidak otomatis menambah atau mengurangi uang. Debt tracker hanya pencatatan. Catatan pembayaran di tracker tidak membuat transaksi kas atau mengubah saldo; transaksi kas dicatat tersendiri.</p>
         </> : <>
           {field("Status", "status", <select id={`${id}-status`} disabled={kind === "opening"} value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className={input}>{Object.entries(statuses).map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select>)}
-          {kind === "transfer" ? field("Dana diterima oleh", "destination", <select id={`${id}-destination`} value={destination} onChange={(e) => setDestination(e.target.value as Person)} className={input}>{Object.entries(people).filter(([v]) => v !== person).map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select>) : field("Kategori", "category", <select id={`${id}-category`} value={category} disabled={kind === "opening"} onChange={(e) => setCategory(e.target.value)} className={input}>{categoryOptions.filter((c) => kind === "opening" ? c.code === "saldo_awal" : !["transfer", "saldo_awal"].includes(c.code)).map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}</select>)}
+          {kind === "transfer" && field("Dana diterima oleh", "destination", <select id={`${id}-destination`} value={destination} onChange={(e) => setDestination(e.target.value as Person)} className={input}>{Object.entries(people).filter(([v]) => v !== person).map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select>)}
+          {field("Kategori", "category", <select id={`${id}-category`} value={category} onChange={(e) => changeCategory(e.target.value)} className={input}>{categoryOptions.map((c) => <option key={c.code} value={c.code}>{c.label}{c.code === "transfer" ? " — Transfer Dika–Affi" : c.code === "saldo_awal" ? " — Saldo awal" : ""}</option>)}</select>)}
+          <p className="text-sm leading-6 text-stone-500 sm:col-span-2">Memilih kategori Transfer atau Saldo awal otomatis menyesuaikan Jenis transaksi. Transfer memindahkan saldo antara Dika dan Affi; mengubah nama kategori tidak mengubah fungsi ini.</p>
           <p className="text-sm leading-6 text-stone-500 sm:col-span-2">Pending dan dibatalkan tidak mengubah saldo aktual. Transfer dan saldo awal tidak dihitung sebagai income/spending. Untuk patungan, catat satu transaksi per sumber dana. Saat pending menjadi paid, sesuaikan tanggal dengan tanggal uang benar-benar berpindah.</p>
         </>}
         <div className="sm:col-span-2">{field("Catatan (opsional)", "notes", <textarea id={`${id}-notes`} rows={3} maxLength={2000} value={notes} onChange={(e) => setNotes(e.target.value)} className={input} />)}</div>
